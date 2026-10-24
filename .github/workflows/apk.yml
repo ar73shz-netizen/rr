@@ -1,0 +1,66 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install packages
+        run: npm install
+
+      - name: Copy libraries and fonts
+        run: |
+          mkdir -p www/lib www/fonts
+          cp node_modules/html5-qrcode/html5-qrcode.min.js www/lib/
+          for w in Regular Medium Bold; do
+            f=$(find node_modules/vazirmatn -iname "Vazirmatn-$w.woff2" | head -n 1)
+            if [ -n "$f" ]; then cp "$f" "www/fonts/Vazirmatn-$w.woff2"; else echo "font $w not found"; fi
+          done
+          ls -la www/fonts
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: Android settings (camera, http server)
+        run: |
+          F=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <application android:usesCleartextTraffic="true"#' $F
+          cat $F
+
+      - name: Generate app icons
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' || echo "icon generation failed"
+
+      - name: Use fixed signing key
+        run: |
+          mkdir -p ~/.android
+          cp keystore/debug.keystore ~/.android/debug.keystore
+
+      - name: Sync web files
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessory-manager-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
